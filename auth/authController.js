@@ -6,11 +6,13 @@ let bcrypt = require('bcryptjs');
 let uuidv4 = require('uuid/v4');
 let nodemailer = require('nodemailer');
 let mailer = require('../config').config;
-let psql = require('psql');
+let pool = require('../config').pool;
+let client = require('../config').client;
+
 /**
  *   Dear Future Me,
  *      I've prepared some comments to remind you how forgetful you are.
- *   Love,
+ *   Hehe,
  *   Me
  */
 module.exports = function(app){
@@ -39,11 +41,9 @@ module.exports = function(app){
         res.render('logout');
     });
     
-    /** GET API for verifySignUp link */
-    /** ================================
-     *   After signing up, link will be sent to new user's email address.
-     *   This will be the API to verify the signup of new user.
-     * ================================
+    /**  GET API for verifySignUp link
+     *   - After signing up, link will be sent to new user's email address.
+     *   This will be the API to verify signup of new user.
      */
     app.get('/verifysignup', function(req, res){
 
@@ -63,16 +63,58 @@ module.exports = function(app){
             }
 
             verifyLinkToken().then(function(verifiedClaim){
-                // connect to database
-                // check if !user,
-                // else insert user verifiedClaim + send email notification
-                // release connection from db
-            },  function(err){
-                // err response here
+
+                function userExistence(){
+                    return new Promise(function(resolve, reject){
+                        let isActive = 1;
+
+                        let query_select_new_user = {
+                            name: 'check-user-existence',
+                            text: 'SELECT * FROM tbl_usr_credentials WHERE username = $1 AND email = $2',
+                            values: [verifiedClaim.username, verifiedClaim.email] 
+                        };
+
+                        let query_insert_new_user = {
+                            text: 'INSERT INTO tbl_usr_credentials(registration_date, firstname, lastname, username, email, isActive, password) VALUES($1, $2, $3, $4, $5, $6, $7)',
+                            values: [verifiedClaim.registration_date, verifiedClaim.firstname, verifiedClaim.lastname, verifiedClaim.username, verifiedClaim.email, isActive, verifiedClaim.password]
+                        };
+
+                        pool.query(query_select_new_user)
+                        .then(function(results){
+
+                            if(typeof results[0] !== 'undefined' && results[0] !== null && results.length > 0){
+                                reject('Username or email already exists.');
+                            } else {
+
+                                pool.query(query_insert_new_user)
+                                .then(function(results){
+
+                                    // nodemailer send approved email notification.
+                                    resolve(results);
+                                    
+                                }).catch(function(err){
+                                    reject(err);
+                                });
+                            }
+
+                        }).catch(function(err){
+                            reject(err);
+                        });
+                    });
+                }
+
+                userExistence().then(function(results){
+                    res.send('Registration for ' + results + 'has been approved.') // check results.rows[]
+                },  function(err){
+                    res.send(reject(err));
+                });
+
             });
 
         }
     });
+
+    
 
 
 }
